@@ -1,0 +1,129 @@
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../components/AuthContext';
+import { apiFetch } from '../lib/api';
+import { Lock, User } from 'lucide-react';
+import { motion } from 'motion/react';
+import { BRAND_CONFIG } from '../constants';
+
+export default function Login() {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const { login } = useAuth();
+  const navigate = useNavigate();
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+
+    try {
+      const data = await apiFetch('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ username, password }),
+      });
+      login(data.token, data.user);
+      navigate('/');
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-brand-light-orange flex flex-col items-center justify-center p-4 relative overflow-hidden">
+      {/* Background Orbs */}
+      <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none">
+        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-brand-orange/10 rounded-full blur-[120px]"></div>
+        <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-brand-orange/10 rounded-full blur-[120px]"></div>
+      </div>
+
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="max-w-md w-full glass-panel p-10 border-brand-soft-orange relative z-10"
+      >
+        <div className="text-center mb-10">
+          <div className="flex justify-center mb-8">
+            <img 
+              src={BRAND_CONFIG.LOGO_URL} 
+              alt={`${BRAND_CONFIG.NAME} Logo`}
+              className="h-28 w-auto" 
+              referrerPolicy="no-referrer"
+            />
+          </div>
+          <p className="text-brand-orange font-bold uppercase text-[11px] tracking-[0.4em]">Integrated Analytics Hub</p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {error && (
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="bg-red-500/10 text-red-400 p-4 rounded-xl text-xs font-bold uppercase tracking-wider border border-red-500/20 text-center"
+            >
+              {error}
+            </motion.div>
+          )}
+
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest px-1">Credential ID</label>
+            <div className="relative">
+              <User className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+              <input
+                type="text"
+                required
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                className="input-field pl-12"
+                placeholder="system_username"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest px-1">Security Passkey</label>
+            <div className="relative">
+              <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+              <input
+                type="password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="input-field pl-12"
+                placeholder="••••••••"
+              />
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full btn-primary py-4 rounded-xl font-bold uppercase tracking-[0.2em] text-xs shadow-2xl shadow-brand-orange/20 disabled:grayscale transition-all"
+          >
+            {loading ? (
+              <div className="flex items-center justify-center gap-3">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                Authenticating
+              </div>
+            ) : 'Establish Connection'}
+          </button>
+        </form>
+
+        <div className="mt-10 pt-8 border-t border-brand-soft-orange text-center">
+          <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest leading-relaxed">
+            {BRAND_CONFIG.NAME} High-Trust Infrastructure<br/>
+            Secure Encryption Protocols Active
+          </p>
+        </div>
+      </motion.div>
+      
+      <p className="mt-8 text-[11px] text-slate-500 font-medium relative z-10">
+        &copy; {new Date().getFullYear()} {BRAND_CONFIG.NAME} Intellect. Unauthorized access is strictly logged.
+      </p>
+    </div>
+  );
+}
