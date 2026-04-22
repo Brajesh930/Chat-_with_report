@@ -3,7 +3,6 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 import LogoutOverlay from './LogoutOverlay';
 import { AnimatePresence } from 'motion/react';
-import { ENTERPRISE_LINKS, BRAND_CONFIG, INSTITUTIONAL_CONTACTS } from '../constants';
 import { 
   LayoutDashboard, 
   FileText, 
@@ -13,14 +12,17 @@ import {
   MessageSquare,
   ExternalLink,
   Settings,
-  ShieldAlert
+  ShieldAlert,
+  Globe
 } from 'lucide-react';
 
 export default function Layout({ children }: { children: React.ReactNode }) {
-  const { user, logout } = useAuth();
+  const { user, logout, config } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [showLogoutOverlay, setShowLogoutOverlay] = useState(false);
+
+  const { BRAND_CONFIG, ENTERPRISE_LINKS, INSTITUTIONAL_CONTACTS } = config;
 
   const handleLogout = () => {
     setShowLogoutOverlay(true);
@@ -37,6 +39,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     { name: 'Users', path: '/admin/users', icon: UserPlus, roles: ['admin'] },
     { name: 'Clients', path: '/admin/clients', icon: Users, roles: ['admin'] },
     { name: 'Chat Settings', path: '/admin/chat-settings', icon: Settings, roles: ['admin'] },
+    { name: 'System Settings', path: '/admin/system-settings', icon: Globe, roles: ['admin'] },
     { name: 'Infrastructure Status', path: '/admin/alerts', icon: ShieldAlert, roles: ['admin'] },
   ];
 
@@ -190,7 +193,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
           <div className="max-w-7xl mx-auto mt-12 pt-8 border-t border-brand-soft-orange flex flex-col sm:flex-row justify-between items-center gap-4">
             <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em]">
-              © 2026 {BRAND_CONFIG.FULL_NAME}. ALL RIGHTS RESERVED.
+              © {new Date().getFullYear()} {BRAND_CONFIG.FULL_NAME}. ALL RIGHTS RESERVED.
             </p>
             <div className="flex items-center gap-6">
               <a href={ENTERPRISE_LINKS.PRIVACY} target="_blank" rel="noopener noreferrer" className="text-[10px] text-slate-500 hover:text-brand-orange transition-colors uppercase font-bold tracking-wider">Privacy Policy</a>

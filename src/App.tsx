@@ -10,6 +10,7 @@ import ReportDetail from './pages/ReportDetail';
 import AdminUsers from './pages/AdminUsers';
 import AdminClients from './pages/AdminClients';
 import AdminChatSettings from './pages/AdminChatSettings';
+import AdminSystemSettings from './pages/AdminSystemSettings';
 import AdminAlerts from './pages/AdminAlerts';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
@@ -35,6 +36,7 @@ export default function App() {
           <Route path="/admin/users" element={<PrivateRoute><AdminUsers /></PrivateRoute>} />
           <Route path="/admin/clients" element={<PrivateRoute><AdminClients /></PrivateRoute>} />
           <Route path="/admin/chat-settings" element={<PrivateRoute><AdminChatSettings /></PrivateRoute>} />
+          <Route path="/admin/system-settings" element={<PrivateRoute><AdminSystemSettings /></PrivateRoute>} />
           <Route path="/admin/alerts" element={<PrivateRoute><AdminAlerts /></PrivateRoute>} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>

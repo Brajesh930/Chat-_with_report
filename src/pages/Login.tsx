@@ -5,7 +5,6 @@ import { apiFetch } from '../lib/api';
 import { Lock, User, Eye, EyeOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import WelcomeOverlay from '../components/WelcomeOverlay';
-import { BRAND_CONFIG, ENTERPRISE_LINKS, INSTITUTIONAL_CONTACTS } from '../constants';
 
 export default function Login() {
   const [username, setUsername] = useState('');
@@ -15,8 +14,10 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [showWelcome, setShowWelcome] = useState(false);
   const [loggedInUser, setLoggedInUser] = useState<string | null>(null);
-  const { login } = useAuth();
+  const { login, config } = useAuth();
   const navigate = useNavigate();
+
+  const { BRAND_CONFIG, INSTITUTIONAL_CONTACTS } = config;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

@@ -264,7 +264,7 @@ app.delete('/api/admin/clients/:id', authenticate, async (req: any, res) => {
 });
 
 // Settings Management
-app.get('/api/settings', authenticate, (req, res) => {
+app.get('/api/settings', (req, res) => {
   const settings = db.prepare('SELECT key, value FROM settings').all();
   const settingsMap = settings.reduce((acc: any, curr: any) => {
     try {
