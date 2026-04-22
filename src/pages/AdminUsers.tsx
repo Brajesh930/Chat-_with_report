@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { apiFetch } from '../lib/api';
-import { UserPlus, Search, Shield, User, Trash2, Edit2, Key } from 'lucide-react';
+import { UserPlus, Search, Shield, User, Trash2, Edit2, Key, RefreshCcw, AlertTriangle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import ConfirmationModal from '../components/ConfirmationModal';
 
@@ -17,6 +17,7 @@ export default function AdminUsers() {
   const [password, setPassword] = useState('');
   const [role, setRole] = useState('employee');
   const [clientId, setClientId] = useState('');
+  const [questionLimit, setQuestionLimit] = useState(50);
 
   const fetchData = async () => {
     try {
@@ -41,6 +42,7 @@ export default function AdminUsers() {
     setPassword('');
     setRole('employee');
     setClientId('');
+    setQuestionLimit(50);
   };
 
   const handleEditClick = (u: any) => {
@@ -49,6 +51,7 @@ export default function AdminUsers() {
     setPassword(''); // Don't show old password
     setRole(u.role);
     setClientId(u.client_id || '');
+    setQuestionLimit(u.question_limit || 50);
     setShowModal(true);
   };
 
@@ -58,12 +61,23 @@ export default function AdminUsers() {
       if (editingUser) {
         await apiFetch(`/admin/users/${editingUser.id}`, {
           method: 'PATCH',
-          body: JSON.stringify({ password: password || undefined, role, client_id: clientId || null }),
+          body: JSON.stringify({ 
+            password: password || undefined, 
+            role, 
+            client_id: clientId || null,
+            question_limit: Number(questionLimit)
+          }),
         });
       } else {
         await apiFetch('/admin/users', {
           method: 'POST',
-          body: JSON.stringify({ username, password, role, client_id: clientId || null }),
+          body: JSON.stringify({ 
+            username, 
+            password, 
+            role, 
+            client_id: clientId || null,
+            question_limit: Number(questionLimit)
+          }),
         });
       }
       setShowModal(false);
@@ -85,6 +99,15 @@ export default function AdminUsers() {
       alert(err);
       setDeleteId(null);
       setIsConfirmingDelete(false);
+    }
+  };
+
+  const handleResetUsage = async (userId: number) => {
+    try {
+      await apiFetch(`/admin/users/${userId}/reset-usage`, { method: 'POST' });
+      fetchData();
+    } catch (err) {
+      alert(err);
     }
   };
 
@@ -122,6 +145,7 @@ export default function AdminUsers() {
             <tr className="border-b border-brand-soft-orange bg-brand-soft-orange/10">
               <th className="px-8 py-5 text-[10px] font-bold text-slate-500 uppercase tracking-widest">Identity Handle</th>
               <th className="px-8 py-5 text-[10px] font-bold text-slate-500 uppercase tracking-widest">Security Level</th>
+              <th className="px-8 py-5 text-[10px] font-bold text-slate-500 uppercase tracking-widest text-center">Research Quota</th>
               <th className="px-8 py-5 text-[10px] font-bold text-slate-500 uppercase tracking-widest">Stakeholder Assignment</th>
               <th className="px-8 py-5 text-[10px] font-bold text-slate-500 uppercase tracking-widest text-right">Operations</th>
             </tr>
@@ -149,11 +173,38 @@ export default function AdminUsers() {
                     {u.role}
                   </span>
                 </td>
+                <td className="px-8 py-5">
+                  <div className="flex flex-col items-center gap-1.5">
+                    <div className="flex items-center gap-2">
+                       <span className={`text-[11px] font-bold ${u.questions_asked >= u.question_limit ? 'text-red-500' : 'text-slate-900'}`}>
+                        {u.questions_asked}
+                      </span>
+                      <span className="text-slate-300 text-[10px]">/</span>
+                      <span className="text-slate-500 text-[11px] font-medium">{u.question_limit}</span>
+                      {u.questions_asked >= u.question_limit * 0.8 && (
+                        <AlertTriangle size={12} className={u.questions_asked >= u.question_limit ? 'text-red-500' : 'text-amber-500'} />
+                      )}
+                    </div>
+                    <div className="w-24 h-1 bg-slate-100 rounded-full overflow-hidden">
+                      <div 
+                        className={`h-full transition-all duration-500 ${u.questions_asked >= u.question_limit ? 'bg-red-500' : 'bg-brand-orange'}`}
+                        style={{ width: `${Math.min(100, (u.questions_asked / u.question_limit) * 100)}%` }}
+                      ></div>
+                    </div>
+                  </div>
+                </td>
                 <td className="px-8 py-5 text-[11px] text-slate-500 font-bold uppercase tracking-wider">
                   {u.client_id ? clients.find(c => c.id === u.client_id)?.name : <span className="text-slate-300">Internal</span>}
                 </td>
                 <td className="px-8 py-5 text-right">
                   <div className="flex items-center justify-end gap-2 text-right">
+                    <button 
+                      onClick={() => handleResetUsage(u.id)}
+                      className="p-2 text-slate-500 hover:text-brand-orange transition-all hover:bg-brand-orange/10 rounded-lg group"
+                      title="Reset Research Quota"
+                    >
+                      <RefreshCcw size={16} className="group-hover:rotate-180 transition-transform duration-500" />
+                    </button>
                     <button 
                       onClick={() => handleEditClick(u)}
                       className="p-2 text-slate-500 hover:text-brand-cyan transition-all hover:bg-brand-cyan/10 rounded-lg group"
@@ -266,6 +317,25 @@ export default function AdminUsers() {
                   </motion.div>
                 )}
               </AnimatePresence>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest px-1">Research Analytical Quota</label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    value={questionLimit}
+                    onChange={(e) => setQuestionLimit(Number(e.target.value))}
+                    className="input-field bg-white border-brand-soft-orange text-slate-900"
+                    placeholder="50"
+                  />
+                  <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                    <Search size={14} />
+                  </div>
+                </div>
+                <p className="text-[9px] text-slate-400 font-medium px-1 uppercase tracking-tight italic">Max AI queries allocated to this identity matrix.</p>
+              </div>
 
               <div className="flex gap-4 pt-4">
                 <button

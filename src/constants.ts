@@ -1,6 +1,12 @@
 /**
- * Centralized External Links & Enterprise Configuration
+ * Centralized Enterprise & Technical Configuration
+ * Use this file to centrally manage all external references, contact points, and branding.
  */
+
+export const INSTITUTIONAL_CONTACTS = {
+  PRIMARY_EMAIL: 'abhay@logicapt.com',
+  TECHNICAL_SUPPORT: 'tech@logicapt.com',
+};
 
 export const ENTERPRISE_LINKS = {
   WEBSITE: 'https://logicapt.com',
@@ -10,7 +16,6 @@ export const ENTERPRISE_LINKS = {
   CONTACT: 'https://logicapt.com/get-in-touch/',
   PRIVACY: 'https://logicapt.com/privacy-policy',
   TERMS: 'https://logicapt.com/terms-of-service',
-  EMAIL: 'abhay@logicapt.com',
   SEARCH_SERVICES: 'https://logicapt.com/services/',
   ABOUT: 'https://logicapt.com/about/',
   LEADERSHIP: 'https://logicapt.com/',

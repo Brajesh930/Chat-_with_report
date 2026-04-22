@@ -87,16 +87,22 @@ app.get('/api/auth/me', authenticate, (req: any, res) => {
 // Admin: Manage Users
 app.get('/api/admin/users', authenticate, (req: any, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
-  const users = db.prepare('SELECT id, username, role, client_id FROM users').all();
+  const users = db.prepare('SELECT id, username, role, client_id, question_limit, questions_asked FROM users').all();
   res.json(users);
 });
 
 app.post('/api/admin/users', authenticate, (req: any, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
-  const { username, password, role, client_id } = req.body;
+  const { username, password, role, client_id, question_limit } = req.body;
   const hashedPassword = bcrypt.hashSync(password, 10);
   try {
-    const result = db.prepare('INSERT INTO users (username, password, role, client_id) VALUES (?, ?, ?, ?)').run(username, hashedPassword, role, client_id || null);
+    const result = db.prepare('INSERT INTO users (username, password, role, client_id, question_limit) VALUES (?, ?, ?, ?, ?)').run(
+      username, 
+      hashedPassword, 
+      role, 
+      client_id || null, 
+      question_limit || 50
+    );
     res.json({ id: result.lastInsertRowid });
   } catch (err) {
     res.status(400).json({ error: 'Username already exists' });
@@ -105,19 +111,71 @@ app.post('/api/admin/users', authenticate, (req: any, res) => {
 
 app.patch('/api/admin/users/:id', authenticate, (req: any, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
-  const { password, role, client_id } = req.body;
+  const { password, role, client_id, question_limit } = req.body;
   
   try {
     if (password) {
       const hashedPassword = bcrypt.hashSync(password, 10);
-      db.prepare('UPDATE users SET password = ?, role = ?, client_id = ? WHERE id = ?').run(hashedPassword, role, client_id || null, req.params.id);
+      db.prepare('UPDATE users SET password = ?, role = ?, client_id = ?, question_limit = ? WHERE id = ?').run(
+        hashedPassword, 
+        role, 
+        client_id || null, 
+        question_limit || 50,
+        req.params.id
+      );
     } else {
-      db.prepare('UPDATE users SET role = ?, client_id = ? WHERE id = ?').run(role, client_id || null, req.params.id);
+      db.prepare('UPDATE users SET role = ?, client_id = ?, question_limit = ? WHERE id = ?').run(
+        role, 
+        client_id || null, 
+        question_limit || 50,
+        req.params.id
+      );
     }
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Failed to update user' });
   }
+});
+
+app.post('/api/admin/users/:id/reset-usage', authenticate, (req: any, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  try {
+    db.prepare('UPDATE users SET questions_asked = 0 WHERE id = ?').run(req.params.id);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to reset usage' });
+  }
+});
+
+app.get('/api/admin/alerts', authenticate, (req: any, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  const alerts = db.prepare('SELECT * FROM system_alerts ORDER BY created_at DESC').all();
+  res.json(alerts);
+});
+
+app.patch('/api/admin/alerts/:id', authenticate, (req: any, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  const { status } = req.body;
+  db.prepare('UPDATE system_alerts SET status = ? WHERE id = ?').run(status, req.params.id);
+  res.json({ success: true });
+});
+
+// Public alert logging (authenticated users only)
+app.post('/api/alerts/log', authenticate, (req: any, res) => {
+  const { type, message } = req.body;
+  try {
+    // Only log if pulse is active or new
+    db.prepare('INSERT INTO system_alerts (type, message) VALUES (?, ?)').run(type, message);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to log alert' });
+  }
+});
+
+// Public check for critical alerts
+app.get('/api/alerts/active', (req, res) => {
+  const active = db.prepare("SELECT * FROM system_alerts WHERE status = 'active' AND type = 'RESOURCE_EXHAUSTED' LIMIT 1").get();
+  res.json({ active: !!active });
 });
 
 app.delete('/api/admin/users/:id', authenticate, (req: any, res) => {
@@ -195,6 +253,37 @@ app.delete('/api/admin/clients/:id', authenticate, async (req: any, res) => {
     console.error('Client Delete Error:', err);
     res.status(500).json({ error: 'Failed to delete client' });
   }
+});
+
+// Settings Management
+app.get('/api/settings', authenticate, (req, res) => {
+  const settings = db.prepare('SELECT key, value FROM settings').all();
+  const settingsMap = settings.reduce((acc: any, curr: any) => {
+    try {
+      acc[curr.key] = JSON.parse(curr.value);
+    } catch (e) {
+      acc[curr.key] = curr.value;
+    }
+    return acc;
+  }, {});
+  res.json(settingsMap);
+});
+
+app.post('/api/admin/settings', authenticate, (req: any, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  const { key, value } = req.body;
+  
+  const updatedValue = typeof value === 'string' ? value : JSON.stringify(value);
+  
+  db.prepare(`
+    INSERT INTO settings (key, value, updated_at) 
+    VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(key) DO UPDATE SET 
+      value = excluded.value,
+      updated_at = excluded.updated_at
+  `).run(key, updatedValue);
+  
+  res.json({ success: true });
 });
 
 async function extractTextFromFile(file: Express.Multer.File): Promise<string> {
@@ -500,11 +589,46 @@ app.patch('/api/reports/:id', authenticate, (req: any, res) => {
 app.get('/api/reports/:id/chat', authenticate, (req: any, res) => {
   const { type } = req.query; // 'report' or 'rough_notes'
   const history = db.prepare('SELECT * FROM chat_history WHERE report_id = ? AND context_type = ? ORDER BY created_at ASC').all(req.params.id, type || 'report');
-  res.json(history);
+  
+  // Also provide current user limit info
+  const user: any = db.prepare('SELECT question_limit, questions_asked FROM users WHERE id = ?').get(req.user.id);
+  
+  res.json({
+    history,
+    usage: {
+      limit: user.question_limit,
+      asked: user.questions_asked
+    }
+  });
 });
 
 app.post('/api/reports/:id/chat', authenticate, (req: any, res) => {
   const { message, role, context_type } = req.body;
+  
+  // If it's a user message, check and increment limit
+  if (role === 'user') {
+    const user: any = db.prepare('SELECT username, question_limit, questions_asked FROM users WHERE id = ?').get(req.user.id);
+    if (user.questions_asked >= user.question_limit) {
+      // Log alert for admin surveillance
+      db.prepare('INSERT INTO system_alerts (type, message) VALUES (?, ?)').run(
+        'QUOTA_EXCEEDED', 
+        `User ${user.username} (ID: ${req.user.id}) has exhausted their analytical quota (${user.question_limit} queries).`
+      );
+      return res.status(403).json({ error: 'Analytical quota exceeded. Please contact your administrator to reset your query limit.' });
+    }
+    
+    db.prepare('UPDATE users SET questions_asked = questions_asked + 1 WHERE id = ?').run(req.user.id);
+
+    // Proactive Warning Logic (Log when reaching 90% threshold for the first time in a session)
+    const updatedUser: any = db.prepare('SELECT questions_asked, question_limit FROM users WHERE id = ?').get(req.user.id);
+    if (updatedUser.questions_asked === Math.floor(updatedUser.question_limit * 0.9)) {
+       db.prepare('INSERT INTO system_alerts (type, message) VALUES (?, ?)').run(
+        'QUOTA_WARNING', 
+        `User ${user.username} (ID: ${req.user.id}) has reached 90% of their analytical quota (${updatedUser.questions_asked}/${updatedUser.question_limit}).`
+      );
+    }
+  }
+
   db.prepare('INSERT INTO chat_history (report_id, user_id, message, role, context_type) VALUES (?, ?, ?, ?, ?)').run(
     req.params.id, 
     req.user.id, 

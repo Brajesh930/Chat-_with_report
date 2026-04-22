@@ -2,13 +2,14 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../components/AuthContext';
 import { apiFetch } from '../lib/api';
-import { Lock, User } from 'lucide-react';
+import { Lock, User, Eye, EyeOff } from 'lucide-react';
 import { motion } from 'motion/react';
-import { BRAND_CONFIG } from '../constants';
+import { BRAND_CONFIG, ENTERPRISE_LINKS, INSTITUTIONAL_CONTACTS } from '../constants';
 
 export default function Login() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
@@ -70,7 +71,7 @@ export default function Login() {
           )}
 
           <div className="space-y-1.5">
-            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest px-1">Credential ID</label>
+            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest px-1">Jurisdictional Identity ID</label>
             <div className="relative">
               <User className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
               <input
@@ -79,7 +80,7 @@ export default function Login() {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 className="input-field pl-12"
-                placeholder="system_username"
+                placeholder="YOUR LOGIN ID"
               />
             </div>
           </div>
@@ -89,13 +90,21 @@ export default function Login() {
             <div className="relative">
               <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
               <input
-                type="password"
+                type={showPassword ? "text" : "password"}
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="input-field pl-12"
+                className="input-field pl-12 pr-12"
                 placeholder="••••••••"
               />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-brand-orange transition-colors"
+                tabIndex={-1}
+              >
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
             </div>
           </div>
 
@@ -113,7 +122,14 @@ export default function Login() {
           </button>
         </form>
 
-        <div className="mt-10 pt-8 border-t border-brand-soft-orange text-center">
+        <div className="mt-8 text-center">
+          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest leading-relaxed">
+            Unable to login / No access / Forgot credentials?<br/>
+            Contact <a href={`mailto:${INSTITUTIONAL_CONTACTS.TECHNICAL_SUPPORT}`} className="text-brand-orange hover:underline decoration-brand-orange/30 underline-offset-4 font-extrabold tracking-tight italic">{INSTITUTIONAL_CONTACTS.TECHNICAL_SUPPORT}</a>
+          </p>
+        </div>
+
+        <div className="mt-8 pt-8 border-t border-brand-soft-orange text-center">
           <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest leading-relaxed">
             {BRAND_CONFIG.NAME} High-Trust Infrastructure<br/>
             Secure Encryption Protocols Active

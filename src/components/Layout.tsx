@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from './AuthContext';
-import { ENTERPRISE_LINKS, BRAND_CONFIG } from '../constants';
+import { ENTERPRISE_LINKS, BRAND_CONFIG, INSTITUTIONAL_CONTACTS } from '../constants';
 import { 
   LayoutDashboard, 
   FileText, 
@@ -9,7 +9,9 @@ import {
   UserPlus, 
   LogOut, 
   MessageSquare,
-  ExternalLink
+  ExternalLink,
+  Settings,
+  ShieldAlert
 } from 'lucide-react';
 
 export default function Layout({ children }: { children: React.ReactNode }) {
@@ -27,6 +29,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     { name: 'Reports', path: '/reports', icon: FileText, roles: ['admin', 'employee', 'client'] },
     { name: 'Users', path: '/admin/users', icon: UserPlus, roles: ['admin'] },
     { name: 'Clients', path: '/admin/clients', icon: Users, roles: ['admin'] },
+    { name: 'Chat Settings', path: '/admin/chat-settings', icon: Settings, roles: ['admin'] },
+    { name: 'Infrastructure Status', path: '/admin/alerts', icon: ShieldAlert, roles: ['admin'] },
   ];
 
   const filteredMenu = menuItems.filter(item => item.roles.includes(user?.role || ''));
@@ -167,7 +171,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 Queries support regarding the analytics portal? 
                 Reach out to our technical team.
               </p>
-              <a href={`mailto:${ENTERPRISE_LINKS.EMAIL}`} className="text-sm font-bold text-brand-orange hover:underline block pt-2">{ENTERPRISE_LINKS.EMAIL}</a>
+              <a href={`mailto:${INSTITUTIONAL_CONTACTS.PRIMARY_EMAIL}`} className="text-sm font-bold text-brand-orange hover:underline block pt-2">{INSTITUTIONAL_CONTACTS.PRIMARY_EMAIL}</a>
             </div>
           </div>
 

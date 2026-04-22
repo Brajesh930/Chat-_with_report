@@ -14,6 +14,8 @@ db.exec(`
     password TEXT NOT NULL,
     role TEXT NOT NULL CHECK(role IN ('admin', 'employee', 'client')),
     client_id INTEGER,
+    question_limit INTEGER DEFAULT 50,
+    questions_asked INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -79,6 +81,20 @@ db.exec(`
     FOREIGN KEY(report_id) REFERENCES reports(id),
     FOREIGN KEY(employee_id) REFERENCES users(id)
   );
+
+  CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS system_alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT NOT NULL,
+    message TEXT NOT NULL,
+    status TEXT DEFAULT 'active' CHECK(status IN ('active', 'resolved')),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 // Migrations (Add missing columns to existing tables)
@@ -103,9 +119,46 @@ try {
       console.log(`Added ${col} column to reports`);
     }
   });
+
+  const usersInfo = db.prepare("PRAGMA table_info(users)").all();
+  if (!usersInfo.some((info: any) => info.name === 'question_limit')) {
+    db.exec("ALTER TABLE users ADD COLUMN question_limit INTEGER DEFAULT 50");
+    console.log("Added question_limit column to users");
+  }
+  if (!usersInfo.some((info: any) => info.name === 'questions_asked')) {
+    db.exec("ALTER TABLE users ADD COLUMN questions_asked INTEGER DEFAULT 0");
+    console.log("Added questions_asked column to users");
+  }
 } catch (err) {
   console.error("Migration error:", err);
 }
+
+// Seed suggested questions
+const defaultReportQuestions = JSON.stringify([
+  "What is the strongest invalidity argument in this report?",
+  "Which prior art references map best to the independent claims?",
+  "What are the key novelty points identified for the asserted patent?",
+  "Which claim elements appear weak or only partially supported?",
+  "Summarize the main invalidation position in simple language."
+]);
+
+const defaultDiscoveryQuestions = JSON.stringify([
+  "What key concepts were used during the search?",
+  "Which technical points appear to have been searched most heavily based on the search strings?",
+  "What are the main search themes reflected in this rough discovery document?",
+  "Which keywords or concept clusters seem most important for prior art searching?",
+  "Based on the search strings, what directions or feature combinations were prioritized?"
+]);
+
+const seedQuestions = (key: string, questions: string) => {
+  const existing = db.prepare('SELECT key FROM settings WHERE key = ?').get(key);
+  if (!existing) {
+    db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run(key, questions);
+  }
+};
+
+seedQuestions('suggested_questions_report', defaultReportQuestions);
+seedQuestions('suggested_questions_discovery', defaultDiscoveryQuestions);
 
 // Seed admin (password: admin123)
 const hash = bcrypt.hashSync('admin123', 10);

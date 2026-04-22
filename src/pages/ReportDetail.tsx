@@ -21,12 +21,21 @@ import {
   AlertCircle,
   ArrowRight,
   Info,
+  Mic,
+  MicOff,
   X as CloseIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
 import { GoogleGenAI } from "@google/genai";
 import ConfirmationModal from '../components/ConfirmationModal';
+
+declare global {
+  interface Window {
+    SpeechRecognition: any;
+    webkitSpeechRecognition: any;
+  }
+}
 
 export default function ReportDetail() {
   const { id } = useParams();
@@ -47,7 +56,12 @@ export default function ReportDetail() {
   const [showIdentity, setShowIdentity] = useState(false);
   const [modError, setModError] = useState<string | null>(null);
   const [clients, setClients] = useState<any[]>([]);
+  const [suggestedQuestions, setSuggestedQuestions] = useState<any>({});
+  const [isListening, setIsListening] = useState(false);
+  const [usage, setUsage] = useState({ limit: 50, asked: 0 });
+  const [isSystemDown, setIsSystemDown] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const recognitionRef = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const roughFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -74,19 +88,37 @@ export default function ReportDetail() {
 
   const fetchChat = async () => {
     try {
-      const history = await apiFetch(`/reports/${id}/chat?type=${chatContext}`);
-      setChatHistory(history);
+      const data = await apiFetch(`/reports/${id}/chat?type=${chatContext}`);
+      setChatHistory(data.history);
+      setUsage(data.usage);
     } catch (err) {
       console.error(err);
     }
   };
 
+  const isQuotaReached = usage.asked >= usage.limit;
+  const isInputLocked = isSystemDown || isQuotaReached;
+
   useEffect(() => {
+    const checkSystemStatus = async () => {
+      try {
+        const data = await apiFetch('/alerts/active');
+        setIsSystemDown(data.active);
+      } catch (err) {
+        console.error("Status check failed:", err);
+      }
+    };
+    checkSystemStatus();
+
     const fetchData = async () => {
       try {
-        const reportData = await apiFetch(`/reports`);
+        const [reportData, settingsData] = await Promise.all([
+          apiFetch(`/reports`),
+          apiFetch('/settings')
+        ]);
         const currentReport = reportData.find((r: any) => r.id === Number(id));
         setReport(currentReport);
+        setSuggestedQuestions(settingsData);
         
         await fetchChat();
 
@@ -121,21 +153,108 @@ export default function ReportDetail() {
     fetchChat();
   }, [chatContext]);
 
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!message.trim() || chatLoading) return;
+  const toggleSpeechRecognition = () => {
+    if (isListening && recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (err) {
+        console.error("Error stopping recognition:", err);
+      }
+      setIsListening(false);
+      return;
+    }
 
-    const userMessage = message;
-    setMessage('');
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setModError("Speech recognition is not supported in this browser.");
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognitionRef.current = recognition;
+      recognition.lang = 'en-US';
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+
+      recognition.onstart = () => {
+        setIsListening(true);
+      };
+
+      recognition.onresult = (event: any) => {
+        const transcript = event.results[0][0].transcript;
+        setMessage(prev => {
+          const fresh = prev.trim();
+          return fresh ? `${fresh} ${transcript}` : transcript;
+        });
+        setIsListening(false);
+      };
+
+      recognition.onerror = (event: any) => {
+        // "aborted" often happens when calling .stop() or if it's interrupted
+        if (event.error !== 'aborted') {
+          console.error("Speech recognition error:", event.error);
+        }
+        
+        setIsListening(false);
+        
+        if (event.error === 'not-allowed') {
+          setModError("Microphone access denied. Please check site permissions.");
+        } else if (event.error === 'network') {
+          setModError("Analytical speech network timeout. Please try again.");
+        }
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+        recognitionRef.current = null;
+      };
+
+      recognition.start();
+    } catch (err) {
+      console.error("Failed to initialize speech engine:", err);
+      setIsListening(false);
+    }
+  };
+
+  const handleSendMessage = async (e?: React.FormEvent, msgOverride?: string) => {
+    if (e) e.preventDefault();
+    
+    const userMessage = msgOverride || message;
+    if (!userMessage.trim() || chatLoading) return;
+
+    if (isQuotaReached) {
+      setModError("Personal Analytical Quota exhausted. Please contact system administrator to reset your query allocation.");
+      // Log individual quota exhaustion to Admin Surveillance
+      apiFetch('/alerts/log', {
+        method: 'POST',
+        body: JSON.stringify({
+          type: 'QUOTA_EXCEEDED',
+          message: `Researcher ${user?.username} has exhausted their analytical quota in the ${report.title} project workspace.`
+        })
+      }).catch(err => console.error("Failed to log quota alert:", err));
+      return;
+    }
+
+    if (!msgOverride) setMessage('');
     setChatLoading(true);
 
     // Add to local state and DB
     const newUserMsg = { role: 'user', message: userMessage, context_type: chatContext };
     setChatHistory(prev => [...prev, newUserMsg]);
-    await apiFetch(`/reports/${id}/chat`, {
-      method: 'POST',
-      body: JSON.stringify(newUserMsg),
-    });
+    setUsage(prev => ({ ...prev, asked: prev.asked + 1 }));
+
+    try {
+      await apiFetch(`/reports/${id}/chat`, {
+        method: 'POST',
+        body: JSON.stringify(newUserMsg),
+      });
+    } catch (err: any) {
+      setModError(err.message || 'Failed to send message');
+      setChatLoading(false);
+      fetchChat(); // Sync back
+      return;
+    }
 
     try {
       // 1. Get files for the current context
@@ -204,6 +323,7 @@ export default function ReportDetail() {
           CURRENT CONTEXT: ${chatContext === 'report' ? 'Main Report Files' : 'Rough Search Notes'}.
           
           Your knowledge is STRICTLY limited to the files provided in the conversation.
+          Refuse to answer any general knowledge questions that are not explicitly anchored in the provided evidence set.
           If the user asks something not covered in these files, politely explain that you can only answer questions based on the provided documents.
           If there are multiple files, aggregate information from all of them to give a comprehensive answer.`,
         }
@@ -217,8 +337,27 @@ export default function ReportDetail() {
         method: 'POST',
         body: JSON.stringify(newBotMsg),
       });
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      console.error("Gemini Interaction Error:", err);
+      const errStr = JSON.stringify(err);
+      if (errStr.includes('429') || errStr.includes('RESOURCE_EXHAUSTED') || (err.message && (err.message.includes('429') || err.message.includes('RESOURCE_EXHAUSTED')))) {
+        setModError("We are down for some time, try again later.");
+        setIsSystemDown(true);
+        // Log to DB for admin notification
+        try {
+          await apiFetch('/alerts/log', {
+            method: 'POST',
+            body: JSON.stringify({
+              type: 'RESOURCE_EXHAUSTED',
+              message: 'Gemini API Monthly Spending Cap reached (429 RESOURCE_EXHAUSTED).'
+            })
+          });
+        } catch (logErr) {
+          console.error("Failed to log system alert:", logErr);
+        }
+      } else {
+        setModError("An error occurred with the Contextual Engine. Please try again.");
+      }
     } finally {
       setChatLoading(false);
     }
@@ -340,6 +479,17 @@ export default function ReportDetail() {
 
   return (
     <div className="flex flex-col gap-8 pb-12">
+      {modError && (
+        <motion.div 
+          initial={{ scale: 0.95, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          className="glass-panel p-4 border-red-500/20 bg-red-50 text-red-500 text-[11px] font-bold uppercase tracking-wider flex items-center gap-3 shadow-lg sticky top-6 z-[60]"
+        >
+          <AlertCircle size={16} />
+          {modError}
+        </motion.div>
+      )}
+
       {/* Header Section */}
       <header className="flex flex-col xl:flex-row xl:items-center justify-between gap-6 glass-panel p-8 border-brand-soft-orange overflow-hidden relative group">
         <div className="absolute top-0 right-0 p-8 opacity-5 text-slate-900 pointer-events-none group-hover:scale-110 transition-transform duration-700">
@@ -451,9 +601,126 @@ export default function ReportDetail() {
         </div>
       </header>
 
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 items-start">
+      <div className="space-y-8">
+        {/* Top: Evidence Corpus */}
+        <div className="glass-panel p-8 border-brand-soft-orange shadow-sm overflow-hidden relative">
+          <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none text-slate-900">
+            <Plus size={60} />
+          </div>
+
+          <div className="flex items-center justify-between mb-8 overflow-hidden">
+            <h3 className="text-sm font-display font-bold text-slate-900 flex items-center gap-3">
+              <FileText size={18} className="text-brand-orange" />
+              Evidence Corpus
+            </h3>
+            {(user?.role === 'admin' || user?.role === 'employee') && (
+              <input
+                type="file"
+                className="hidden"
+                ref={fileInputRef}
+                onChange={(e) => handleAddFile(e, false)}
+              />
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            {/* Primary Deliverables */}
+            <div>
+              <div className="flex items-center justify-between mb-3 px-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] uppercase font-bold text-slate-500 tracking-widest">Primary Reports</span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-brand-orange"></span>
+                </div>
+                {(user?.role === 'admin' || user?.role === 'employee') && (
+                  <button 
+                    onClick={() => report.visibility === 'public' ? setModError('Switch classification to Privilege for workspace edits') : fileInputRef.current?.click()}
+                    className="p-1.5 rounded-lg bg-white text-slate-500 hover:text-brand-orange border border-brand-soft-orange transition-all shadow-sm"
+                  >
+                    {fileUploading ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
+                  </button>
+                )}
+              </div>
+              <div className="space-y-2">
+                {report.files?.filter((f: any) => !f.is_rough_note).map((file: any) => (
+                  <div key={file.id} className="flex items-center justify-between gap-3 p-3 bg-brand-soft-orange/10 rounded-xl border border-brand-soft-orange group hover:border-brand-orange/30 transition-all">
+                    <span className="text-[11px] font-bold text-slate-700 truncate tracking-tight flex-1">{file.original_name}</span>
+                    <div className="flex items-center gap-1.5">
+                      <a href={file.url} target="_blank" rel="noopener noreferrer" className="p-1.5 text-slate-500 hover:text-brand-orange transition-colors">
+                        <Download size={14} />
+                      </a>
+                      {(user?.role === 'admin' || user?.role === 'employee') && (
+                        <div className="relative">
+                          <button 
+                            onClick={() => {
+                              if (report.visibility === 'public') {
+                                setModError('Switch classification to Privilege for workspace edits');
+                              } else {
+                                setDeletingFileId(file.id);
+                                setIsConfirmingDeleteFile(true);
+                              }
+                            }}
+                            className="p-1.5 text-slate-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
+                            title="Purge Attachment"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Research Intelligence */}
+            {user?.role !== 'client' && (
+              <div>
+                <div className="flex items-center justify-between mb-3 px-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] uppercase font-bold text-slate-500 tracking-widest">Internal Intelligence</span>
+                    <span className="w-1.5 h-1.5 rounded-full bg-slate-700"></span>
+                  </div>
+                  {(user?.role === 'admin' || user?.role === 'employee') && (
+                    <button 
+                      onClick={() => {
+                        roughFileInputRef.current?.click();
+                      }}
+                      className="p-1.5 rounded-lg bg-slate-800 text-slate-400 hover:bg-slate-700 transition-all shadow-lg"
+                    >
+                      <Plus size={12} />
+                    </button>
+                  )}
+                  <input type="file" ref={roughFileInputRef} className="hidden" onChange={(e) => handleAddFile(e, true)} />
+                </div>
+                <div className="space-y-2">
+                  {report.files?.filter((f: any) => f.is_rough_note).map((file: any) => (
+                    <div key={file.id} className="flex items-center justify-between gap-3 p-3 bg-slate-900/50 rounded-xl border border-slate-800/50 group hover:border-slate-700 transition-all">
+                      <span className="text-[11px] font-bold text-slate-500 truncate tracking-tight flex-1">{file.original_name}</span>
+                      <div className="flex items-center gap-1.5">
+                        <a href={file.url} target="_blank" rel="noopener noreferrer" className="p-1.5 text-slate-600 hover:text-brand-cyan transition-colors">
+                          <Download size={14} />
+                        </a>
+                        <button 
+                          onClick={() => {
+                            setDeletingFileId(file.id);
+                            setIsConfirmingDeleteFile(true);
+                          }}
+                          className="p-1.5 text-slate-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
+                          title="Purge Intellectual Asset"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* Main Workspace Area (AI Chat & Notes) */}
-        <div className="xl:col-span-8 space-y-8 h-full flex flex-col min-h-[700px]">
+        <div className="space-y-8 h-full flex flex-col min-h-[700px]">
           <div className="glass-panel border-brand-soft-orange overflow-hidden flex flex-col flex-1 shadow-sm relative">
             {/* Tabs Header */}
             <div className="flex items-center justify-between px-8 bg-brand-soft-orange/10 border-b border-brand-soft-orange">
@@ -537,9 +804,9 @@ export default function ReportDetail() {
                           <Bot size={20} />
                         </div>
                         <div>
-                          <p className="text-xs font-bold text-brand-blue uppercase tracking-widest mb-1">Analytical Core v3.0</p>
+                          <p className="text-xs font-bold text-brand-blue uppercase tracking-widest mb-1">Contextual Engine v3.0</p>
                           <p className="text-sm text-slate-500 leading-relaxed">
-                            System initialized. Interactive cross-examination is now available for the current document corpus. Specify technical queries or request risk assessment summaries.
+                            Analysis powered by Project Gemini Technical Model. The engine is trained to isolate technical risk factors and patent claim alignments across the current evidence set. System initialized. Please restrict your queries strictly to the provided document corpus; the engine is not intended for general knowledge retrieval.
                           </p>
                         </div>
                       </motion.div>
@@ -629,30 +896,106 @@ export default function ReportDetail() {
             {/* Input Overlay */}
             <div className="p-8 border-t border-brand-soft-orange bg-white/50 backdrop-blur-xl">
               {activeTab === 'chat' && (
-                <div className="flex items-center justify-center gap-2 mb-4 px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl">
-                  <AlertCircle size={12} className="text-slate-400" />
-                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest text-center">
-                    Accuracy depends on Google Gemini AI. Please manually verify all technical outputs before implementation.
-                  </p>
+                <div className="space-y-4 mb-4">
+                  {/* Suggested Questions */}
+                  <div className="flex flex-wrap gap-2">
+                    {(chatContext === 'report' 
+                      ? suggestedQuestions.suggested_questions_report 
+                      : suggestedQuestions.suggested_questions_discovery
+                    )?.map((q: string, idx: number) => (
+                      <button
+                        key={idx}
+                        onClick={() => handleSendMessage(undefined, q)}
+                        className="px-3 py-1.5 bg-white border border-brand-soft-orange rounded-full text-[10px] font-bold text-slate-600 hover:text-brand-orange hover:border-brand-orange/30 hover:bg-brand-orange/5 transition-all shadow-sm flex items-center gap-2 group"
+                      >
+                        <MessageSquare size={10} className="text-slate-400 group-hover:text-brand-orange" />
+                        {q}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center justify-center gap-2 px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl relative overflow-hidden group/usage">
+                    {/* Quota Progress Bar Background */}
+                    <div 
+                      className={`absolute left-0 top-0 bottom-0 transition-all duration-700 pointer-events-none ${
+                        isQuotaReached ? 'bg-red-500/10' : 'bg-brand-orange/5'
+                      }`} 
+                      style={{ width: `${Math.min(100, (usage.asked / usage.limit) * 100)}%` }}
+                    />
+                    
+                    <div className="relative flex items-center justify-center gap-4 w-full">
+                      <div className="flex items-center gap-2">
+                        <AlertCircle size={12} className={isQuotaReached ? 'text-red-500' : usage.asked >= usage.limit * 0.8 ? 'text-amber-500' : 'text-slate-400'} />
+                        <p className={`text-[10px] font-bold uppercase tracking-widest text-center ${isQuotaReached ? 'text-red-500' : 'text-slate-400'}`}>
+                          {isQuotaReached 
+                            ? "Analytical Quota Exceeded • Contact Admin for Reset" 
+                            : usage.asked >= usage.limit * 0.8 
+                              ? "Approaching Analytical Threshold" 
+                              : "Accuracy depends on Google Gemini AI. Verify outputs."}
+                        </p>
+                      </div>
+
+                      <div className="h-4 w-px bg-slate-200" />
+
+                      <div className="flex items-center gap-2">
+                        <span className="text-[9px] font-bold text-slate-500 uppercase tracking-[0.2em]">Usage:</span>
+                        <div className="flex items-center gap-1.5 bg-white px-2 py-0.5 rounded-md border border-slate-200 shadow-sm">
+                          <span className={`text-[10px] font-bold ${usage.asked >= usage.limit ? 'text-red-500' : 'text-slate-900'}`}>{usage.asked}</span>
+                          <span className="text-[10px] text-slate-300">/</span>
+                          <span className="text-[10px] text-slate-500 font-medium">{usage.limit}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
               {activeTab === 'chat' ? (
                 <form onSubmit={handleSendMessage} className="relative group">
                   <div className="absolute inset-x-0 -top-full h-24 bg-gradient-to-t from-white/80 to-transparent pointer-events-none" />
-                  <input
-                    type="text"
-                    value={message}
-                    onChange={(e) => setMessage(e.target.value)}
-                    placeholder={`Submit query to ${chatContext === 'report' ? 'Primary Document Set' : 'Discovery Intelligence'}...`}
-                    className="w-full pl-6 pr-16 py-4 bg-white border border-brand-soft-orange rounded-2xl text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-brand-orange/30 focus:border-brand-orange/50 outline-none transition-all shadow-sm font-medium text-sm"
-                  />
-                  <button
-                    type="submit"
-                    disabled={!message.trim() || chatLoading}
-                    className="absolute right-2.5 top-2.5 btn-primary p-2.5 flex items-center justify-center shadow-lg shadow-brand-orange/20 disabled:grayscale disabled:opacity-30"
-                  >
-                    <Send size={18} />
-                  </button>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={message}
+                      onChange={(e) => setMessage(e.target.value)}
+                      disabled={isInputLocked || chatLoading}
+                      placeholder={
+                        isSystemDown 
+                          ? "AI Engine currently offline for maintenance..." 
+                          : isQuotaReached
+                            ? "Analytical quota reached. Contact admin for reset."
+                            : `Analyze ${chatContext === 'report' ? 'Report Documents' : 'Discovery Intelligence'} (Strictly contextual queries)...`
+                      }
+                      className={`w-full pl-6 pr-28 py-4 bg-white border rounded-2xl text-slate-900 placeholder:text-slate-400 focus:ring-2 outline-none transition-all shadow-sm font-medium text-sm ${
+                        isInputLocked 
+                          ? 'border-red-200 bg-red-50/30 cursor-not-allowed text-red-800' 
+                          : 'border-brand-soft-orange focus:ring-brand-orange/30 focus:border-brand-orange/50'
+                      }`}
+                    />
+                    <div className="absolute right-2.5 top-2.5 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={toggleSpeechRecognition}
+                        disabled={isInputLocked}
+                        className={`p-2.5 flex items-center justify-center rounded-xl transition-all ${
+                          isInputLocked
+                            ? 'bg-slate-100 text-slate-300 cursor-not-allowed'
+                            : isListening 
+                              ? 'bg-red-500 text-white animate-pulse shadow-lg shadow-red-500/20' 
+                              : 'bg-brand-soft-orange/30 text-slate-500 hover:text-brand-orange hover:bg-brand-orange/10'
+                        }`}
+                        title={isInputLocked ? "Analysis input disabled" : isListening ? "Listening..." : "Voice Analysis Input"}
+                      >
+                        {isListening ? <MicOff size={18} /> : <Mic size={18} />}
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={!message.trim() || chatLoading || isInputLocked}
+                        className="btn-primary p-2.5 flex items-center justify-center shadow-lg shadow-brand-orange/20 disabled:grayscale disabled:opacity-30"
+                      >
+                        <Send size={18} />
+                      </button>
+                    </div>
+                  </div>
                 </form>
               ) : (
                 <form onSubmit={handleAddNote} className="flex gap-4">
@@ -674,33 +1017,38 @@ export default function ReportDetail() {
               )}
             </div>
           </div>
-        </div>
 
-        {/* Intelligence Context Sidebar */}
-        <div className="xl:col-span-4 space-y-8">
-          {modError && (
-            <motion.div 
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              className="bg-red-500/10 text-red-400 p-4 rounded-xl border border-red-500/20 text-[11px] font-bold uppercase tracking-wider flex items-center gap-3 shadow-lg"
-            >
-              <AlertCircle size={16} />
-              {modError}
-            </motion.div>
-          )}
-
-          {/* Workflow Controls Card */}
-          {(user?.role === 'admin' || user?.role === 'employee') && (
-            <div className="premium-card p-6 border-slate-800/60">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="p-1.5 bg-brand-cyan/10 text-brand-cyan rounded-lg">
-                  <Settings size={14} />
-                </div>
-                <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Workflow Metadata</h3>
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 items-start">
+            {/* AI Intelligence Badge (Contextual Engine) */}
+            <div className="xl:col-span-6 rounded-2xl p-6 bg-gradient-to-br from-indigo-900/40 to-slate-900 border border-indigo-500/20 shadow-2xl relative overflow-hidden group">
+              <div className="absolute -right-4 -bottom-4 opacity-10 group-hover:scale-110 transition-transform duration-700 text-indigo-400">
+                <Bot size={100} />
               </div>
               
-              <div className="space-y-6">
-                <div className="grid grid-cols-2 gap-4">
+              <div className="relative z-10">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="p-1.5 bg-indigo-500 text-slate-950 rounded-lg shadow-lg shadow-indigo-500/20">
+                    <Bot size={16} />
+                  </div>
+                  <h3 className="text-[10px] font-bold text-indigo-300 uppercase tracking-[0.2em]">Contextual Engine v3.0</h3>
+                </div>
+                <p className="text-[11px] text-indigo-100/60 leading-relaxed font-medium">
+                  Analysis powered by <span className="text-indigo-300 font-bold">Project Gemini Technical Model</span>. The engine is trained to isolate technical risk factors and patent claim alignments across the current evidence set.
+                </p>
+              </div>
+            </div>
+
+            {/* Workflow Metadata moved to bottom for full width chat */}
+            {(user?.role === 'admin' || user?.role === 'employee') && (
+              <div className="xl:col-span-6 premium-card p-6 border-slate-800/60 bg-white shadow-sm">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="p-1.5 bg-brand-cyan/10 text-brand-cyan rounded-lg">
+                    <Settings size={14} />
+                  </div>
+                  <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Workflow Metadata</h3>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="space-y-1.5">
                     <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest px-1">Current Status</p>
                     <div className="relative group">
@@ -734,161 +1082,24 @@ export default function ReportDetail() {
                       )}
                     </div>
                   </div>
-                </div>
-
-                <div className="space-y-1.5 pt-2">
-                  <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest px-1">Enterprise Stakeholder</p>
-                  <select
-                    disabled={report.visibility === 'public'}
-                    value={report.client_id || ''}
-                    onChange={(e) => handleUpdateMetadata(report.status, report.visibility, Number(e.target.value))}
-                    className={`input-field py-2.5 text-[11px] font-bold uppercase tracking-wider appearance-none bg-white border-brand-soft-orange ${
-                      report.visibility === 'public' ? 'opacity-50 cursor-not-allowed' : ''
-                    }`}
-                  >
-                    {clients.map(c => (
-                      <option key={c.id} value={c.id} className="bg-white">{c.name}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Document Inventory Card */}
-          <div className="glass-panel p-8 border-brand-soft-orange shadow-sm overflow-hidden relative">
-            <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none text-slate-900">
-              <Plus size={60} />
-            </div>
-
-            <div className="flex items-center justify-between mb-8 overflow-hidden">
-              <h3 className="text-sm font-display font-bold text-slate-900 flex items-center gap-3">
-                <FileText size={18} className="text-brand-orange" />
-                Evidence Corpus
-              </h3>
-              {(user?.role === 'admin' || user?.role === 'employee') && (
-                <input
-                  type="file"
-                  className="hidden"
-                  ref={fileInputRef}
-                  onChange={(e) => handleAddFile(e, false)}
-                />
-              )}
-            </div>
-
-            <div className="space-y-8">
-              {/* Primary Deliverables */}
-              <div>
-                <div className="flex items-center justify-between mb-3 px-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] uppercase font-bold text-slate-500 tracking-widest">Primary Reports</span>
-                    <span className="w-1.5 h-1.5 rounded-full bg-brand-orange"></span>
-                  </div>
-                  {(user?.role === 'admin' || user?.role === 'employee') && (
-                    <button 
-                      onClick={() => report.visibility === 'public' ? setModError('Switch classification to Privilege for workspace edits') : fileInputRef.current?.click()}
-                      className="p-1.5 rounded-lg bg-white text-slate-500 hover:text-brand-orange border border-brand-soft-orange transition-all shadow-sm"
+                  <div className="space-y-1.5">
+                    <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest px-1">Stakeholder</p>
+                    <select
+                      disabled={report.visibility === 'public'}
+                      value={report.client_id || ''}
+                      onChange={(e) => handleUpdateMetadata(report.status, report.visibility, Number(e.target.value))}
+                      className={`input-field py-2 text-[11px] font-bold uppercase tracking-wider appearance-none bg-white border-brand-soft-orange ${
+                        report.visibility === 'public' ? 'opacity-50 cursor-not-allowed' : ''
+                      }`}
                     >
-                      {fileUploading ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
-                    </button>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  {report.files?.filter((f: any) => !f.is_rough_note).map((file: any) => (
-                    <div key={file.id} className="flex items-center justify-between gap-3 p-3 bg-brand-soft-orange/10 rounded-xl border border-brand-soft-orange group hover:border-brand-orange/30 transition-all">
-                      <span className="text-[11px] font-bold text-slate-700 truncate tracking-tight flex-1">{file.original_name}</span>
-                      <div className="flex items-center gap-1.5">
-                        <a href={file.url} target="_blank" rel="noopener noreferrer" className="p-1.5 text-slate-500 hover:text-brand-orange transition-colors">
-                          <Download size={14} />
-                        </a>
-                        {(user?.role === 'admin' || user?.role === 'employee') && (
-                          <div className="relative">
-                            <button 
-                              onClick={() => {
-                                if (report.visibility === 'public') {
-                                  setModError('Switch classification to Privilege for workspace edits');
-                                } else {
-                                  setDeletingFileId(file.id);
-                                  setIsConfirmingDeleteFile(true);
-                                }
-                              }}
-                              className="p-1.5 text-slate-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
-                              title="Purge Attachment"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Research Intelligence */}
-              {user?.role !== 'client' && (
-                <div>
-                  <div className="flex items-center justify-between mb-3 px-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] uppercase font-bold text-slate-500 tracking-widest">Internal Intelligence</span>
-                      <span className="w-1.5 h-1.5 rounded-full bg-slate-700"></span>
-                    </div>
-                    {(user?.role === 'admin' || user?.role === 'employee') && (
-                      <button 
-                        onClick={() => {
-                          roughFileInputRef.current?.click();
-                        }}
-                        className="p-1.5 rounded-lg bg-slate-800 text-slate-400 hover:bg-slate-700 transition-all shadow-lg"
-                      >
-                        <Plus size={12} />
-                      </button>
-                    )}
-                    <input type="file" ref={roughFileInputRef} className="hidden" onChange={(e) => handleAddFile(e, true)} />
-                  </div>
-                  <div className="space-y-2">
-                    {report.files?.filter((f: any) => f.is_rough_note).map((file: any) => (
-                      <div key={file.id} className="flex items-center justify-between gap-3 p-3 bg-slate-900/50 rounded-xl border border-slate-800/50 group hover:border-slate-700 transition-all">
-                        <span className="text-[11px] font-bold text-slate-500 truncate tracking-tight flex-1">{file.original_name}</span>
-                        <div className="flex items-center gap-1.5">
-                          <a href={file.url} target="_blank" rel="noopener noreferrer" className="p-1.5 text-slate-600 hover:text-brand-cyan transition-colors">
-                            <Download size={14} />
-                          </a>
-                          <button 
-                            onClick={() => {
-                              setDeletingFileId(file.id);
-                              setIsConfirmingDeleteFile(true);
-                            }}
-                            className="p-1.5 text-slate-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
-                            title="Purge Intellectual Asset"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
+                      {clients.map(c => (
+                        <option key={c.id} value={c.id} className="bg-white">{c.name}</option>
+                      ))}
+                    </select>
                   </div>
                 </div>
-              )}
-            </div>
-          </div>
-
-          {/* AI Intelligence Badge */}
-          <div className="rounded-2xl p-6 bg-gradient-to-br from-indigo-900/40 to-slate-900 border border-indigo-500/20 shadow-2xl relative overflow-hidden group">
-            <div className="absolute -right-4 -bottom-4 opacity-10 group-hover:scale-110 transition-transform duration-700 text-indigo-400">
-              <Bot size={100} />
-            </div>
-            
-            <div className="relative z-10">
-              <div className="flex items-center gap-3 mb-3">
-                <div className="p-1.5 bg-indigo-500 text-slate-950 rounded-lg shadow-lg shadow-indigo-500/20">
-                  <Bot size={16} />
-                </div>
-                <h3 className="text-[10px] font-bold text-indigo-300 uppercase tracking-[0.2em]">Contextual Engine</h3>
               </div>
-              <p className="text-[11px] text-indigo-100/60 leading-relaxed font-medium">
-                Analysis powered by <span className="text-indigo-300 font-bold">Project Gemini Technical Model</span>. The engine is trained to isolate technical risk factors and patent claim alignments across the current evidence set.
-              </p>
-            </div>
+            )}
           </div>
         </div>
       </div>

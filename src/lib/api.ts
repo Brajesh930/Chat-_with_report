@@ -28,14 +28,25 @@ export async function apiFetch(endpoint: string, options: any = {}) {
     
     let errorMessage = 'Something went wrong';
     try {
-      if (contentType && contentType.includes('application/json')) {
+      // Try to parse JSON strictly first
+      if (contentType && (contentType.includes('application/json') || contentType.includes('text/json'))) {
         const error = await response.json();
-        errorMessage = error.error || errorMessage;
+        errorMessage = error.error || error.message || errorMessage;
       } else {
-        errorMessage = `Server Error (${response.status}): ${await response.text().then(t => t.slice(0, 100))}`;
+        // Handle common plain text errors gracefully
+        const text = await response.text();
+        if (response.status === 403 && (text.toLowerCase().includes('forbidden') || !text)) {
+          errorMessage = 'Access Restricted: You do not have permission to perform this analytical operation.';
+        } else {
+          errorMessage = `Infrastructure Message (${response.status}): ${text.slice(0, 150) || 'No details provided'}`;
+        }
       }
     } catch (e) {
-      errorMessage = `Error ${response.status}: ${response.statusText}`;
+      if (response.status === 403) {
+        errorMessage = 'Analytical Access Denied (403)';
+      } else {
+        errorMessage = `Operational Exception ${response.status}: ${response.statusText}`;
+      }
     }
     throw new Error(errorMessage);
   }
