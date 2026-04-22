@@ -230,7 +230,8 @@ export default function ReportDetail() {
         method: 'POST',
         body: JSON.stringify({
           type: 'QUOTA_EXCEEDED',
-          message: `Researcher ${user?.username} has exhausted their analytical quota in the ${report.title} project workspace.`
+          message: `Researcher ${user?.username} has exhausted their analytical quota in the ${report.title} project workspace.`,
+          target_user_id: user?.id
         })
       }).catch(err => console.error("Failed to log quota alert:", err));
       return;
@@ -339,8 +340,21 @@ export default function ReportDetail() {
       });
     } catch (err: any) {
       console.error("Gemini Interaction Error:", err);
-      const errStr = JSON.stringify(err);
-      if (errStr.includes('429') || errStr.includes('RESOURCE_EXHAUSTED') || (err.message && (err.message.includes('429') || err.message.includes('RESOURCE_EXHAUSTED')))) {
+      
+      // Robust detection of 429 / RESOURCE_EXHAUSTED
+      const is429 = (
+        (err.code === 429) || 
+        (err.status === 429) ||
+        (err.message && (err.message.includes('429') || err.message.includes('RESOURCE_EXHAUSTED'))) ||
+        (err.error?.code === 429) ||
+        (err.error?.status === 'RESOURCE_EXHAUSTED') ||
+        (String(err).includes('429')) ||
+        (String(err).includes('RESOURCE_EXHAUSTED')) ||
+        (JSON.stringify(err).includes('429')) ||
+        (JSON.stringify(err).includes('RESOURCE_EXHAUSTED'))
+      );
+
+      if (is429) {
         setModError("We are down for some time, try again later.");
         setIsSystemDown(true);
         // Log to DB for admin notification

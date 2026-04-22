@@ -41,6 +41,19 @@ export default function AdminAlerts() {
     }
   };
 
+  const handleResetUserUsage = async (userId: number, alertId: number) => {
+    try {
+      // 1. Reset user usage
+      await apiFetch(`/admin/users/${userId}/reset-usage`, {
+        method: 'POST'
+      });
+      // 2. Resolve the alert
+      await handleResolveAlert(alertId);
+    } catch (err) {
+      alert("Failed to reset quota: " + err);
+    }
+  };
+
   if (loading) return (
     <div className="flex items-center justify-center min-h-[400px]">
       <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-orange"></div>
@@ -102,16 +115,25 @@ export default function AdminAlerts() {
                         : 'border-amber-200 bg-amber-50/30 border-l-amber-500'
                   }`}>
                     <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-                      <button 
-                        onClick={() => handleResolveAlert(alert.id)}
-                        className={`px-3 py-1.5 text-[10px] font-bold rounded-lg shadow-lg transition-all uppercase tracking-widest ${
-                          alert.type === 'RESOURCE_EXHAUSTED'
-                            ? 'bg-emerald-500 text-white hover:bg-emerald-600 shadow-emerald-500/20'
-                            : 'bg-slate-700 text-white hover:bg-slate-900 shadow-slate-500/20'
-                        }`}
-                      >
-                        {alert.type === 'RESOURCE_EXHAUSTED' ? 'Restore Infrastructure' : 'Acknowledge Signal'}
-                      </button>
+                      {alert.target_user_id ? (
+                        <button 
+                          onClick={() => handleResetUserUsage(alert.target_user_id, alert.id)}
+                          className="px-3 py-1.5 bg-brand-orange text-white text-[10px] font-bold rounded-lg hover:bg-brand-orange/80 shadow-lg shadow-brand-orange/20 transition-all uppercase tracking-widest"
+                        >
+                          Restore Researcher Quota
+                        </button>
+                      ) : (
+                        <button 
+                          onClick={() => handleResolveAlert(alert.id)}
+                          className={`px-3 py-1.5 text-[10px] font-bold rounded-lg shadow-lg transition-all uppercase tracking-widest ${
+                            alert.type === 'RESOURCE_EXHAUSTED'
+                              ? 'bg-emerald-500 text-white hover:bg-emerald-600 shadow-emerald-500/20'
+                              : 'bg-slate-700 text-white hover:bg-slate-900 shadow-slate-500/20'
+                          }`}
+                        >
+                          {alert.type === 'RESOURCE_EXHAUSTED' ? 'Restore Infrastructure' : 'Acknowledge Signal'}
+                        </button>
+                      )}
                     </div>
                     
                     <div className={`mt-1 p-2 rounded-lg ${

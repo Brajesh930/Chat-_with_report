@@ -92,13 +92,21 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     type TEXT NOT NULL,
     message TEXT NOT NULL,
+    target_user_id INTEGER,
     status TEXT DEFAULT 'active' CHECK(status IN ('active', 'resolved')),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(target_user_id) REFERENCES users(id)
   );
 `);
 
 // Migrations (Add missing columns to existing tables)
 try {
+  const systemAlertsInfo = db.prepare("PRAGMA table_info(system_alerts)").all();
+  if (!systemAlertsInfo.some((col: any) => col.name === 'target_user_id')) {
+    db.exec("ALTER TABLE system_alerts ADD COLUMN target_user_id INTEGER");
+    console.log("Added target_user_id column to system_alerts");
+  }
+
   const reportFilesInfo = db.prepare("PRAGMA table_info(report_files)").all();
   if (!reportFilesInfo.some((col: any) => col.name === 'mime_type')) {
     db.exec("ALTER TABLE report_files ADD COLUMN mime_type TEXT");

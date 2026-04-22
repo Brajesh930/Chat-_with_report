@@ -27,12 +27,17 @@ const app = express();
 const PORT = 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key';
 
-// Initialize Storage Provider
-// To switch to actual AWS S3: 
-// 1. Uncomment S3StorageProvider and comment out LocalStorageProvider
-// 2. Set your AWS environment variables in your deployment settings
-const storage = new LocalStorageProvider();
-// const storage = new S3StorageProvider();
+// Initialize Storage Provider based on environment variable
+const storageMode = process.env.STORAGE_PROVIDER || 'local';
+let storage: LocalStorageProvider | S3StorageProvider;
+
+if (storageMode === 's3') {
+  console.log('[Storage] Initializing AWS S3 Storage Provider');
+  storage = new S3StorageProvider();
+} else {
+  console.log('[Storage] Initializing Local Disk Storage Provider');
+  storage = new LocalStorageProvider();
+}
 
 // Multer for file uploads
 const upload = multer({ dest: 'temp-uploads/' });
@@ -162,10 +167,13 @@ app.patch('/api/admin/alerts/:id', authenticate, (req: any, res) => {
 
 // Public alert logging (authenticated users only)
 app.post('/api/alerts/log', authenticate, (req: any, res) => {
-  const { type, message } = req.body;
+  const { type, message, target_user_id } = req.body;
   try {
-    // Only log if pulse is active or new
-    db.prepare('INSERT INTO system_alerts (type, message) VALUES (?, ?)').run(type, message);
+    // Check if an active alert of this type for this user already exists to prevent dashboard noise
+    const existing = db.prepare("SELECT id FROM system_alerts WHERE type = ? AND target_user_id = ? AND status = 'active'").get(type, target_user_id || null);
+    if (!existing) {
+      db.prepare('INSERT INTO system_alerts (type, message, target_user_id) VALUES (?, ?, ?)').run(type, message, target_user_id || null);
+    }
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Failed to log alert' });
@@ -610,10 +618,15 @@ app.post('/api/reports/:id/chat', authenticate, (req: any, res) => {
     const user: any = db.prepare('SELECT username, question_limit, questions_asked FROM users WHERE id = ?').get(req.user.id);
     if (user.questions_asked >= user.question_limit) {
       // Log alert for admin surveillance
-      db.prepare('INSERT INTO system_alerts (type, message) VALUES (?, ?)').run(
-        'QUOTA_EXCEEDED', 
-        `User ${user.username} (ID: ${req.user.id}) has exhausted their analytical quota (${user.question_limit} queries).`
-      );
+      // Check if an active quota alert already exists for this user
+      const existing = db.prepare("SELECT id FROM system_alerts WHERE type = 'QUOTA_EXCEEDED' AND target_user_id = ? AND status = 'active'").get(req.user.id);
+      if (!existing) {
+        db.prepare('INSERT INTO system_alerts (type, message, target_user_id) VALUES (?, ?, ?)').run(
+          'QUOTA_EXCEEDED', 
+          `User ${user.username} (ID: ${req.user.id}) has exhausted their analytical quota (${user.question_limit} queries).`,
+          req.user.id
+        );
+      }
       return res.status(403).json({ error: 'Analytical quota exceeded. Please contact your administrator to reset your query limit.' });
     }
     
@@ -622,10 +635,15 @@ app.post('/api/reports/:id/chat', authenticate, (req: any, res) => {
     // Proactive Warning Logic (Log when reaching 90% threshold for the first time in a session)
     const updatedUser: any = db.prepare('SELECT questions_asked, question_limit FROM users WHERE id = ?').get(req.user.id);
     if (updatedUser.questions_asked === Math.floor(updatedUser.question_limit * 0.9)) {
-       db.prepare('INSERT INTO system_alerts (type, message) VALUES (?, ?)').run(
-        'QUOTA_WARNING', 
-        `User ${user.username} (ID: ${req.user.id}) has reached 90% of their analytical quota (${updatedUser.questions_asked}/${updatedUser.question_limit}).`
-      );
+       // Check if an active warning already exists
+       const existingWarning = db.prepare("SELECT id FROM system_alerts WHERE type = 'QUOTA_WARNING' AND target_user_id = ? AND status = 'active'").get(req.user.id);
+       if (!existingWarning) {
+         db.prepare('INSERT INTO system_alerts (type, message, target_user_id) VALUES (?, ?, ?)').run(
+          'QUOTA_WARNING', 
+          `User ${user.username} (ID: ${req.user.id}) has reached 90% of their analytical quota (${updatedUser.questions_asked}/${updatedUser.question_limit}).`,
+          req.user.id
+        );
+       }
     }
   }
 
