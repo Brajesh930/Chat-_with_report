@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../components/AuthContext';
 import { apiFetch } from '../lib/api';
 import { Lock, User, Eye, EyeOff } from 'lucide-react';
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
+import WelcomeOverlay from '../components/WelcomeOverlay';
 import { BRAND_CONFIG, ENTERPRISE_LINKS, INSTITUTIONAL_CONTACTS } from '../constants';
 
 export default function Login() {
@@ -12,6 +13,8 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showWelcome, setShowWelcome] = useState(false);
+  const [loggedInUser, setLoggedInUser] = useState<string | null>(null);
   const { login } = useAuth();
   const navigate = useNavigate();
 
@@ -25,17 +28,30 @@ export default function Login() {
         method: 'POST',
         body: JSON.stringify({ username, password }),
       });
-      login(data.token, data.user);
-      navigate('/');
+      
+      // Setup welcome state first
+      setLoggedInUser(data.user.username);
+      setShowWelcome(true);
+      
+      // Delay navigation to show welcome message
+      setTimeout(() => {
+        login(data.token, data.user);
+        navigate('/');
+      }, 4000);
     } catch (err: any) {
       setError(err.message);
-    } finally {
       setLoading(false);
     }
   };
 
   return (
     <div className="min-h-screen bg-brand-light-orange flex flex-col items-center justify-center p-4 relative overflow-hidden">
+      <AnimatePresence>
+        {showWelcome && loggedInUser && (
+          <WelcomeOverlay username={loggedInUser} />
+        )}
+      </AnimatePresence>
+
       {/* Background Orbs */}
       <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none">
         <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-brand-orange/10 rounded-full blur-[120px]"></div>

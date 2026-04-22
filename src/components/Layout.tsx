@@ -1,6 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from './AuthContext';
+import LogoutOverlay from './LogoutOverlay';
+import { AnimatePresence } from 'motion/react';
 import { ENTERPRISE_LINKS, BRAND_CONFIG, INSTITUTIONAL_CONTACTS } from '../constants';
 import { 
   LayoutDashboard, 
@@ -18,10 +20,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const [showLogoutOverlay, setShowLogoutOverlay] = useState(false);
 
   const handleLogout = () => {
-    logout();
-    navigate('/login');
+    setShowLogoutOverlay(true);
+    // Wait for 4 seconds as requested
+    setTimeout(() => {
+      logout();
+      navigate('/login');
+    }, 4000);
   };
 
   const menuItems = [
@@ -37,6 +44,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-screen bg-brand-light-orange font-sans text-slate-900">
+      <AnimatePresence>
+        {showLogoutOverlay && (
+          <LogoutOverlay username={user?.username || 'Valued User'} />
+        )}
+      </AnimatePresence>
+
       {/* Sidebar */}
       <aside className="w-68 bg-white border-r border-brand-soft-orange flex flex-col shadow-xl z-20">
         <div className="p-8 flex justify-center">
